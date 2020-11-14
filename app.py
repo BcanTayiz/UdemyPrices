@@ -16,6 +16,10 @@ from sklearn.metrics import mean_squared_error
 import datetime
 import random
 from sklearn import preprocessing
+from sklearn import metrics
+from matplotlib.pyplot import figure
+from sklearn.metrics import r2_score
+
 
 random.seed(10)
 
@@ -54,7 +58,34 @@ st.table(data.isna().sum())
 
 
 
-data = data.drop(['is_paid','price', 'num_subscribers','time','course_id','num_reviews','course_title','url','published_timestamp'], axis=1)
+
+
+#NLP KEYWORD COUNT
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+corpus = data.course_title.tolist()
+vectorizer = TfidfVectorizer()
+transformedCorpus = vectorizer.fit_transform(corpus)
+
+countKeywords = []
+for title in data.course_title.tolist():  
+    count = 0
+    for word in vectorizer.get_feature_names():
+        if word in title:
+            count += 1
+
+    countKeywords.append(count)
+
+
+data['Keyword_Count'] = countKeywords
+
+
+
+#NLP KEYWORD COUNT
+
+
+data = data.drop(['course_id','is_paid', 'price','course_title','num_subscribers','time','num_reviews','url','published_timestamp'], axis=1)
+
 
 catCategories = []
 for name in data.columns:
@@ -69,7 +100,7 @@ target_name = st.selectbox("Select Target Value",tuple(data.columns))
 st.write(data.head())
 
 
-
+FeatureNames = data.drop(target_name,axis=1).columns   
 X = data.drop(target_name,axis=1)
 y = data[target_name]
 
@@ -85,12 +116,19 @@ st.write(X)
 def parameter_ui(regressor_name):
     params = dict()
     if regressor_name == regressorTypes[0]:
-        n_estimators = st.sidebar.slider("n_estimators",11,99)
+        n_estimators = st.sidebar.slider("n_estimators",10,100)
         criterion = st.sidebar.selectbox("criterion",("mse", "mae"))
         max_depth = st.sidebar.slider("max_depth",1,100)
         min_samples_split = st.sidebar.slider("min_samples_split",2,100)
         min_samples_leaf = st.sidebar.slider("min_samples_leaf",1,100)
         max_features = st.sidebar.selectbox("criterion",("auto", "sqrt", "log2"))
+        max_leaf_nodes = st.sidebar.slider("max_leaf_nodes",2,100)
+        min_impurity_decrease = st.sidebar.slider("min_impurity_decrease",0,1000)
+        bootstrap = st.sidebar.selectbox("bootstrap",("True", "False"))
+        oob_score = st.sidebar.selectbox("oob_score",("True", "False"))
+        
+
+        min_impurity_decrease = min_impurity_decrease / 10
 
         params["n_estimators"] = n_estimators
         params["criterion"] = criterion
@@ -98,7 +136,11 @@ def parameter_ui(regressor_name):
         params["min_samples_split"] = min_samples_split
         params["min_samples_leaf"] = min_samples_leaf
         params["max_features"] = max_features
-          
+        params["max_leaf_nodes"] = max_leaf_nodes
+        params["min_impurity_decrease"] = min_impurity_decrease
+        params["bootstrap"] = bootstrap
+        params["oob_score"] = oob_score
+
 
     elif regressor_name == regressorTypes[1]:
         kernel = st.sidebar.selectbox("criterion",("linear", "poly", "rbf","sigmoid","precomputed"))
@@ -131,7 +173,8 @@ def parameter_ui(regressor_name):
         activation = st.sidebar.selectbox("activation",("identity", "logistic","tanh","relu"))
         solver = st.sidebar.selectbox("solver",("lbfgs", "sgd", "adam"))
         alpha = st.sidebar.slider("alpha",0,100,1)
-        batch_size = st.sidebar.slider("min_samples_leaf",1,100)
+        batch_size = st.sidebar.slider("batch_size",1,100)
+        max_iter = st.sidebar.slider("max_iter",1,100)
         learning_rate = st.sidebar.selectbox("learning_rate",("constant", "invscaling", "adaptive"))
 
         alpha = alpha / 100
@@ -141,6 +184,7 @@ def parameter_ui(regressor_name):
         params["solver"] = solver
         params["alpha"] = alpha
         params["batch_size"] = batch_size
+        params["max_iter"] = max_iter
         params["learning_rate"] = learning_rate
 
     return params
@@ -151,14 +195,16 @@ params = parameter_ui(regressor_name)
 def get_regressor(regressor_name,params):
     if regressor_name == regressorTypes[0]:
          reg = RandomForestRegressor(n_estimators=params["n_estimators"], criterion=params["criterion"],max_depth=params["max_depth"]
-         ,min_samples_split = params["min_samples_split"],min_samples_leaf = params["min_samples_leaf"],max_features = params["max_features"] )
+         ,min_samples_split = params["min_samples_split"],min_samples_leaf = params["min_samples_leaf"],max_features = params["max_features"],
+          max_leaf_nodes=params["max_leaf_nodes"],min_impurity_decrease = params["min_impurity_decrease"],bootstrap=params["bootstrap"],
+          oob_score = params["oob_score"])
     elif regressor_name == regressorTypes[1]:
         reg =  SVR(kernel=params["kernel"], degree=params["degree"],gamma=params["gamma"],C = params["C"])
     elif regressor_name == regressorTypes[2]:
         reg =  xgb.XGBRegressor(booster=params["booster"], verbosity=params["verbosity"],nthread=params["nthread"],eta=params["eta"],gamma=params["gamma"],max_depth=params["max_depth"])
     elif regressor_name == regressorTypes[3]:
         reg = MLPRegressor(hidden_layer_sizes=params["hidden_layer_sizes"],activation=params["activation"],solver=params["solver"],
-        alpha=params["alpha"],batch_size=params["batch_size"],learning_rate=params["learning_rate"])
+        alpha=params["alpha"],batch_size=params["batch_size"],learning_rate=params["learning_rate"],max_iter = params["max_iter"])
 
     return reg
 
@@ -174,17 +220,32 @@ reg.fit(X_train,y_train)
 y_pred = reg.predict(X_test)
 
 
+
+pyplot.scatter(y_pred,y_test)
+
+pyplot.title('Prediction Results')
+pyplot.xlabel('Y Prediction Data')
+pyplot.ylabel('Y Test Data')
+
+st.pyplot()
+st.header("R2 Score")
+st.write("R2 score shows correlation of results. Make sure it is close to -1 or close to 1")
+st.write(r2_score(y_test, y_pred))
+
+
+
 #MODEL IMPORTANCE
 try:
+    st.set_option('deprecation.showPyplotGlobalUse', False)
     st.header("Feature Importance Figure")
     importances = reg.feature_importances_
     # summarize feature importance
     for i,v in enumerate(importances):
         print('Feature: %0d, Score: %.5f' % (i,v))
     # plot feature importance
-    from matplotlib.pyplot import figure
+  
     figure(num=None, figsize=(10, 10), dpi=80, facecolor='w', edgecolor='k')
-    pyplot.bar([data.iloc[:,x].name for x in range(len(importances))], importances)
+    pyplot.bar([FeatureNames[x] for x in range(len(importances))], importances)
 
     st.pyplot()
 except:
@@ -212,11 +273,12 @@ contentDuration = st.text_input('Enter your content duration as hours:')
 subject = st.text_input('Enter your subject here:') 
 titleLen = st.text_input('Estimated title length:') 
 month = st.text_input('Which month is it created?:')
+keyword = st.text_input('How many keyword did you use on title?:')
 
 
 df = pd.DataFrame(columns = X_train.columns)
 df.loc[0] = [0 for i in X_train.columns ]
-df.loc[1] = [num_of_lectures,level,contentDuration,subject,titleLen,month]
+df.loc[1] = [num_of_lectures,level,contentDuration,subject,titleLen,month,keyword]
 
 
 if  num_of_lectures and level and contentDuration and subject and titleLen and month:
